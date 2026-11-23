@@ -33,6 +33,12 @@ const MAX_HOLD_BARS = 360; // sell after holding this many bars, whatever the pr
 const IMPACT_CAP_BPS = 30; // never size a buy so its own impact tops this
 const MAX_SLIPPAGE_BPS = 150; // per order, measured from the latest close
 const MIN_NOTIONAL = 1_000_000n; // 1 USDC, in quote units
+// Do not open a new position in the window's final hour: a trade opened
+// there has at most 60 bars to clear ~26 bps of round-trip costs, and the
+// forced flatten at the last close takes away any choice of exit. The
+// window is 1,440 bars; the offset counts warm-up batches, when there are
+// any, so the guard always lands on the scored window's last 60 bars.
+const NO_BUY_AFTER = 1380;
 
 // Rolling state, rebuilt from the wire alone.
 const closes: number[] = []; // closes in USDC, oldest first
@@ -112,7 +118,8 @@ await runBars({
     const dropBps = bpsMove(close, high); // positive when below the high
     const prevClose = closes[n - 2]!;
     const turningUp = close > prevClose && close > open;
-    if (dropBps >= DIP_BPS && turningUp) {
+    const tooLate = state.seq >= state.warmupBars + NO_BUY_AFTER;
+    if (dropBps >= DIP_BPS && turningUp && !tooLate) {
       // Size: all the cash, but keep the trade's own impact under the cap
       // against the pool depth at the latest close.
       const depth = state.depthAt(SYMBOL);
